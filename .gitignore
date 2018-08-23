@@ -1,0 +1,6 @@
+node_modules
+npm-debug.log
+.devrc
+.idea/
+.DS_Store
+.editorconfig
