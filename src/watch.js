@@ -2,67 +2,83 @@
 
 const debug = require('debug')('hot-dev')
 const chalk =require('chalk')
-const  chokidar = require('chokidar')
+const chokidar = require('chokidar')
+const serv = require('./serv.js')
+const {
+  log,
+  dateFormate
+} = require('./utils.js')
 
-const eventsHandler = {
-  add(...args) {
-    console.log('=========================================> add', args.length)
-    console.log(...args)
-  },
-  addDir(...args) {
-    console.log('=========================================> addDir', args.length)
-    console.log(...args)
-
-  },
-  change(...args) {
-    console.log('=========================================> change', args.length)
-    console.log(...args)
-
-  },
-  unlink(...args) {
-    console.log('=========================================> unlink', args.length)
-    console.log(...args)
-
-  },
-  unlinkDir(...args) {
-    console.log('=========================================> unlinkDir', args.length)
-    console.log(...args)
-
-  },
-  ready(...args) {
-    console.log('=========================================> ready', args.length)
-    console.log(...args)
-
-  },
-  raw(...args) {
-    console.log('=========================================> raw', args.length)
-    console.log(...args)
-
-  },
-  error(...args) {
-    console.log('=========================================> error', args.length)
-    console.log(...args)
-  },
+function logState(action, path, time) {
+  const pad = Array(10 - action.length).join(' ')
+  log(
+    chalk.blue(pad + action + ': ') +
+    path +
+    (time ? chalk.bold(' @ ') + chalk.greenBright(time) : '')
+  )
 }
 
+function getEventHandler(name, node) {
+  if (name === 'ready') {
+    return () => {
+      log(chalk.greenBright.bold('ready for watching...'))
+      node.start()
+    }
+  } else if (name === 'change' || name === 'add' || name === 'addDir') {
+    return (path, stats) => {
+      logState(name, path, dateFormate(stats.mtime))
+      node.reload()
+    }
+  } else if (name === 'unlink' || name === 'unlinkDir') {
+    return path => {
+      logState(name, path)
+      node.reload()
+    }
+  } else if (name === 'error') {
+    return (...args) => {
+      log(chalk.red('Error was occured:'))
+      log(...args)
+    }
+  } else if (name === 'raw') {
+    return (action, path) => {
+      log('raw[' + action + '] : ' + path)
+    }
+  }
+}
 
-function watch(paths, options = {}, events = ['change']) {
-  console.log(chalk.green('start wathing...'))
-  debug('paths: %j', paths)
-  debug('options: %j', options)
-  debug('events: %s', events)
+function watch({
+  entry = 'index.js',
+  paths = [process.cwd()],
+  options = {},
+  events = ['change']
+}) {
+  log(chalk.greenBright('entry file: '), entry)
+  log(chalk.greenBright('watching paths: '), JSON.stringify(paths, null, 2))
+  log(chalk.greenBright('watching options: '), JSON.stringify(options, null, 2))
+  log(chalk.greenBright('wathing events: '), JSON.stringify(events, null, 2))
+  log(chalk.greenBright.bold('\nstart wathing...'))
+
+  const node = serv(entry)
   const watcher = chokidar.watch(paths, options)
   let i = 0
   while (i < events.length) {
     const name = events[i]
-    console.log(name, eventsHandler[name])
-    if (eventsHandler[name]) {
-      watcher.on(name, eventsHandler[name])
-    }
+    watcher.on(name, getEventHandler(name, node))
     i += 1
   }
 
-  return watcher
+  const signals = ['SIGINT', 'SIGQUIT', 'SIGTERM']
+  signals.forEach(signal => {
+    process.once(signal, () => {
+      process.exit(signal)
+    })
+  })
+
+  process.once('exit', (signal) => {
+    log()
+    debug('kill hot-dev:%s with %s', watcher.pid, signal);
+    watcher.close()
+  })
 }
 
 exports = module.exports = watch

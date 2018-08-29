@@ -1,26 +1,33 @@
 'use strict'
 
-const debug = require('debug')('hot-dev')
-const path = require('path')
 const fs = require('fs')
+const path = require('path')
 const os = require('os')
+const chalk = require('chalk')
+const debug = require('debug')('hot-dev')
 const yaml = require('js-yaml')
 
+const log = require('./utils.js').log
 const watch = require('./watch.js')
+
 
 function defaultConfig() {
   return {
-    paths: [__dirname],
+    paths: [process.cwd()],
     options: {
       persistent: true,
-      ignored: '',
+      ignored: [
+        '**/node_modules/**',
+        '**/node_modules/\.**',
+        '**/\.git/**',
+      ],
       ignoreInitial: true,
       followSymlinks: true,
-      cwd: '',
+      cwd: null,
       disableGlobbing: false,
       usePolling: true,
       interval: 100,
-      binaryInterval:300,
+      binaryInterval: 300,
       useFsEvents: true,
       alwaysStat: true,
       depth: 99,
@@ -32,13 +39,19 @@ function defaultConfig() {
       atomic: 100,
     },
     events: [
+      'ready',
       'change',
+      'add',
+      'addDir',
+      'unlink',
+      'unlinkDir',
+      'error',
     ]
   }
 }
 
 function readFrom(file) {
-  debug('try read file: %s' file)
+  debug('try read file: %s', file)
   let content = false
   try {
     content = yaml.safeLoad(fs.readFileSync(file, 'utf8'))
@@ -48,9 +61,9 @@ function readFrom(file) {
   return content
 }
 
-function getConfig(path) {
+function getDftConfig(filePath) {
   let content = false
-  if (path === undefined) {
+  if (filePath === undefined) {
     const tryFiles = [
       path.resolve('.hot-dev.yaml'),
       path.resolve('hot-dev.yaml'),
@@ -73,40 +86,53 @@ function getConfig(path) {
       }
       i += 1
     }
+    if (!content) {
+      log(chalk.yellow(
+        'read field from hot-dev config file, ' +
+        'it will use defaultConfig'
+      ))
+      content = defaultConfig()
+    }
   } else {
-    content = readFrom(path)
-  }
-  if (!content) {
-    content = defaultConfig()
+    content = readFrom(filePath)
+    if (!content) {
+      log(chalk.yellow(
+        `read field from ${chalk.underline(filePath)}, ` +
+        'it will use defaultConfig'
+      ))
+      content = defaultConfig()
+    }
   }
   return content
 }
 
-function getEntry(path) {
-  if (path === undefined) {
+function getEntry(filePath) {
+  if (filePath === undefined) {
     const tryFiles = [
-      path.resolve('index.js')
-      path.resolve('Index.js')
-      path.resolve('app.js')
-      path.resolve('App.js')
-      path.resolve('start.js')
-      path.resolve('Start.js')
-      path.resolve('master.js')
-      path.resolve('Master.js')
+      path.resolve('index.js'),
+      path.resolve('Index.js'),
+      path.resolve('app.js'),
+      path.resolve('App.js'),
+      path.resolve('start.js'),
+      path.resolve('Start.js'),
+      path.resolve('master.js'),
+      path.resolve('Master.js'),
     ]
     let i = 0
     while (i < tryFiles.length) {
       if (fs.existsSync(tryFiles[i])) {
-        path = tryFiles[i]
+        filePath = tryFiles[i]
         break
       }
       i += 1
     }
-    if (!path) {
-      console.log(chalk.red(`can't find entry file in ${chalk.underline(__dirname)}`))
-      console.log(chalk.greenBright(
-        '    please use -f <filePath> to specify a entry file' +
-        'or touch a file with following names in this directory: \n' +
+    if (!filePath) {
+      log(chalk.red(`can't find entry file in ${chalk.underline(process.cwd())}`))
+      log(chalk.yellowBright(
+        '\n  please use -f <filePath> to specify a entry file\n' +
+          '  or touch a file with following names in this directory: \n'
+      ))
+      log(
         '    index.js\n' +
         '    Index.js\n' +
         '    app.js\n' +
@@ -115,17 +141,18 @@ function getEntry(path) {
         '    Start.js\n' +
         '    master.js\n' +
         '    Master.js\n'
-      ))
+      )
       return false
     }
   } else {
-    if (!path.isAbsolute(path)) {
-      path = path.resolve(path)
+    if (!path.isAbsolute(filePath)) {
+      filePath = path.resolve(filePath)
+      log(filePath)
     }
-    if (!fs.existsSync(path)) {
-      const dir = path.dirname(path)
-      const baseName = path.basename(path)
-      console.log(chalk.red(
+    if (!fs.existsSync(filePath)) {
+      const dir = path.dirname(filePath)
+      const baseName = path.basename(filePath)
+      log(chalk.red(
         `can't find entry file(${chalk.underline(baseName)})` +
         ` in ${chalk.underline(dir)}, ` +
         'please specify another file'
@@ -133,11 +160,11 @@ function getEntry(path) {
       return false
     }
   }
-  return path
+  return filePath
 }
 
-function genOptions(content, watches, excludes, exOptions, events) {
-  const options = content && content.options || {}
+function genConfig(config, entry, watches, excludes, exOptions, events) {
+  const options = config && config.options || {}
   if (Object.prototype.toString.call(exOptions) === '[object Object]') {
     const awaitWriteFinish = exOptions.awaitWriteFinish
     const stabilityThreshold = exOptions.stabilityThreshold
@@ -168,25 +195,72 @@ function genOptions(content, watches, excludes, exOptions, events) {
   if (Array.isArray(excludes) && excludes.length > 0) {
     options.ignored = excludes
   }
-  content.options = options
+  config.options = options
   if (Array.isArray(watches) && watches.length > 0) {
-    content.paths = watches
+    config.paths = watches
   }
   if (Array.isArray(events) && events.length > 0) {
-    content.events = events
+    config.events = events
   }
-  return content
+  config.entry = entry
+  return config
 }
 
-function start(configPath, entryPath, watches, excludes, exOptions, events) {
-  const content = readFrom(configPath)
-  const options = genOptions(content, watches, excludes, exOptions, events)
+exports.start = function start(configPath, entryPath, watches, excludes, options, events) {
+  const dftConf = getDftConfig(configPath)
   const entry = getEntry(entryPath)
   if (entry) {
-
+    const config = genConfig(dftConf, entry, watches, excludes, options, events)
+    watch(config)
   }
-  const watcher = watch(options)
-  return watcher
 }
 
-exports = module.exports = start
+exports.getConfigFile = function getConfigFile(filePath) {
+  if (!path.isAbsolute(filePath)) {
+    filePath = path.join(process.cwd(), filePath)
+  }
+  const ext = path.extname(filePath)
+  if (!ext || (ext !== 'yml' && ext !== 'yaml')) {
+    if (fs.existsSync(filePath + '.yaml')) {
+      return filePath + '.yaml'
+    }
+    if (fs.existsSync(filePath + '.yml')) {
+      return filePath + '.yaml'
+    }
+    if (fs.existsSync(filePath + '.rc')) {
+      return filePath + '.rc'
+    }
+  }
+  if (fs.existsSync(filePath)) {
+    return filePath
+  }
+  log(chalk.red(`configuration file: '${chalk.underline(filePath)}' not exist`))
+  return false
+}
+
+exports.getEntryFile = function getEntryFile(filePath) {
+  if (!path.isAbsolute(filePath)) {
+    filePath = path.join(process.cwd(), filePath)
+  }
+  const ext = path.extname(filePath)
+  if (!ext || ext !== '.js') {
+    filePath += '.js'
+  }
+  if (fs.existsSync(filePath)) {
+    return filePath
+  }
+  log(chalk.red(`entry file: '${chalk.underline(filePath)}' not exist`))
+  return false
+}
+
+exports.getWathPath = function getWathPath(pattern, value) {
+
+}
+
+exports.getOptions = function getOptions(option, value) {
+
+}
+
+exports.getEvents = function getEvents(event, value) {
+
+}
