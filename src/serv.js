@@ -1,7 +1,7 @@
 'use strict'
 
 const cp = require('child_process')
-const debug = require('debug')('hot-dev')
+const debug = require('debug')('hot-dev:serv')
 const chalk = require('chalk')
 
 const log = require('./utils.js').log
@@ -13,12 +13,18 @@ function node(entry) {
 
   function fork() {
     const newProcess = cp.fork(entry)
-    log(chalk.greenBright(`fork child process[pid = ${newProcess.pid}]`))
+    if (subProcess && subProcess.pid) {
+      log(
+        chalk.gray(`child process[pid = ${subProcess.pid}] exited, ` +
+        `child process[pid = ${newProcess.pid}] forked`)
+      )
+    }
     newProcess.on('exit', (code, signal) => {
-      log(chalk.redBright(
-        `child process[pid = ${newProcess.pid}] exited ` +
-        `with code = ${code}, signal = ${signal}`
-      ))
+      if (code > 0 || signal !== 'SIGTERM') {
+        const msg = `child process[pid = ${newProcess.pid}] exited ` +
+          `with code = ${code}, signal = ${signal}`
+        log(chalk.redBright(msg))
+      }
     })
     return newProcess
   }
@@ -28,6 +34,7 @@ function node(entry) {
   return node = {
     start() {
       subProcess = fork()
+      debug('entry process has forked')
     },
     reload() {
       if (reloading) {
@@ -37,6 +44,7 @@ function node(entry) {
       }
       reloading = true
       const newProcess = fork()
+      debug('entry process has reloaded')
       if (subProcess) {
         subProcess.kill()
       }
@@ -46,6 +54,15 @@ function node(entry) {
         debug('reloadPedding happened, reload again')
         reloadPedding = false
         node.reload()
+      }
+    },
+    exit(signal) {
+      if (subProcess) {
+        subProcess.kill(signal)
+        log(chalk.redBright(
+          `\nchild process[pid = ${subProcess.pid}] exited ` +
+          `with signal = ${signal}`
+        ))
       }
     }
   }

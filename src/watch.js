@@ -1,6 +1,6 @@
 'use strict'
 
-const debug = require('debug')('hot-dev')
+const debug = require('debug')('hot-dev:watch')
 const chalk =require('chalk')
 const chokidar = require('chokidar')
 const serv = require('./serv.js')
@@ -14,7 +14,7 @@ function logState(action, path, time) {
   log(
     chalk.blue(pad + action + ': ') +
     path +
-    (time ? chalk.bold(' @ ') + chalk.greenBright(time) : '')
+    (time ? chalk.bold.blue('  @ ') + time : '')
   )
 }
 
@@ -52,11 +52,10 @@ function watch({
   options = {},
   events = ['change']
 }) {
-  log(chalk.greenBright('entry file: '), entry)
-  log(chalk.greenBright('watching paths: '), JSON.stringify(paths, null, 2))
-  log(chalk.greenBright('watching options: '), JSON.stringify(options, null, 2))
-  log(chalk.greenBright('wathing events: '), JSON.stringify(events, null, 2))
-  log(chalk.greenBright.bold('\nstart wathing...'))
+  debug(chalk.greenBright('entry file: ') + '%s', entry)
+  debug(chalk.greenBright('watching paths: '), JSON.stringify(paths, null, 4))
+  debug(chalk.greenBright('watching options: '), JSON.stringify(options, null, 4))
+  debug(chalk.greenBright('wathing events: '), JSON.stringify(events, null, 4))
 
   const node = serv(entry)
   const watcher = chokidar.watch(paths, options)
@@ -70,13 +69,13 @@ function watch({
   const signals = ['SIGINT', 'SIGQUIT', 'SIGTERM']
   signals.forEach(signal => {
     process.once(signal, () => {
+      node.exit(signal)
       process.exit(signal)
     })
   })
 
   process.once('exit', (signal) => {
-    log()
-    debug('kill hot-dev:%s with %s', watcher.pid, signal);
+    log(chalk.red(`kill hot-dev[pid = ${process.pid}] with signal = ${signal}`))
     watcher.close()
   })
 }

@@ -4,7 +4,7 @@ const fs = require('fs')
 const path = require('path')
 const os = require('os')
 const chalk = require('chalk')
-const debug = require('debug')('hot-dev')
+const debug = require('debug')('hot-dev:command')
 const yaml = require('js-yaml')
 
 const log = require('./utils.js').log
@@ -130,7 +130,7 @@ function getEntry(filePath) {
       log(chalk.red(`can't find entry file in ${chalk.underline(process.cwd())}`))
       log(chalk.yellowBright(
         '\n  please use -f <filePath> to specify a entry file\n' +
-          '  or touch a file with following names in this directory: \n'
+          '  or touch a file with one of the following names in this directory: \n'
       ))
       log(
         '    index.js\n' +
